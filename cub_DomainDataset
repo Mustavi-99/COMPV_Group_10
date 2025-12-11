@@ -1,0 +1,161 @@
+import os
+import random
+from typing import Literal, Optional, Tuple
+
+import pandas as pd
+from PIL import Image, ImageFilter
+import torch
+from torch.utils.data import Dataset
+from torchvision import transforms
+
+
+DomainType = Literal["A", "B", "C", "all"]  # A=full, B=crop, C=background
+
+
+class CUBDomainDataset(Dataset):
+    """
+    CUB dataset with synthetic domains:
+      - Domain 0 (A): full image
+      - Domain 1 (B): cropped bird (using bounding box)
+      - Domain 2 (C): background-focused (bird region blurred)
+
+    If which_domain="all", a random domain is chosen per sample and
+    the corresponding domain_id is returned.
+    """
+
+    def __init__(
+        self,
+        root: str,
+        split: Literal["train", "test"] = "train",
+        which_domain: DomainType = "all",
+        transform: Optional[transforms.Compose] = None,
+        blur_radius: int = 10,
+    ):
+        """
+        Args:
+            root: path to CUB_200_2011 directory.
+            split: "train" or "test" based on train_test_split.txt.
+            which_domain: "A" | "B" | "C" | "all".
+            transform: torchvision transforms applied after PIL processing.
+            blur_radius: how strongly to blur the bird region for domain C.
+        """
+        self.root = root
+        self.images_folder = os.path.join(root, "images")
+        self.which_domain = which_domain
+        self.transform = transform
+        self.blur_radius = blur_radius
+
+        # ---- Load metadata ----
+        images_txt = os.path.join(root, "images.txt")
+        labels_txt = os.path.join(root, "image_class_labels.txt")
+        split_txt = os.path.join(root, "train_test_split.txt")
+        bbox_txt = os.path.join(root, "bounding_boxes.txt")
+
+        images_df = pd.read_csv(
+            images_txt, sep=" ", header=None, names=["img_id", "img_path"]
+        )
+        labels_df = pd.read_csv(
+            labels_txt, sep=" ", header=None, names=["img_id", "class_id"]
+        )
+        split_df = pd.read_csv(
+            split_txt, sep=" ", header=None, names=["img_id", "is_train"]
+        )
+        bbox_df = pd.read_csv(
+            bbox_txt, sep=" ", header=None, names=["img_id", "x", "y", "w", "h"]
+        )
+        bbox_df["x2"] = bbox_df["x"] + bbox_df["w"]
+        bbox_df["y2"] = bbox_df["y"] + bbox_df["h"]
+
+        # Merge metadata into single table
+        df = (
+            images_df
+            .merge(labels_df, on="img_id")
+            .merge(split_df, on="img_id")
+            .merge(bbox_df, on="img_id")
+        )
+
+        if split == "train":
+            df = df[df["is_train"] == 1]
+        else:
+            df = df[df["is_train"] == 0]
+
+        # Class IDs in CUB are 1..200 → make them 0..199
+        df["class_id"] = df["class_id"] - 1
+
+        self.df = df.reset_index(drop=True)
+
+        # Default transform if none given
+        if self.transform is None:
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((224, 224)),
+                    transforms.ToTensor(),
+                ]
+            )
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+    def _load_full_image(self, row) -> Image.Image:
+        img_rel = row["img_path"]
+        img_path = os.path.join(self.images_folder, img_rel)
+        img = Image.open(img_path).convert("RGB")
+        return img
+
+    def _crop_bird(self, img: Image.Image, row) -> Image.Image:
+        x1, y1, x2, y2 = int(row["x"]), int(row["y"]), int(row["x2"]), int(row["y2"])
+        return img.crop((x1, y1, x2, y2))
+
+    def _background_focused(self, img: Image.Image, row) -> Image.Image:
+        x1, y1, x2, y2 = int(row["x"]), int(row["y"]), int(row["x2"]), int(row["y2"])
+        bg = img.copy()
+        bird_region = bg.crop((x1, y1, x2, y2)).filter(
+            ImageFilter.GaussianBlur(radius=self.blur_radius)
+        )
+        bg.paste(bird_region, (x1, y1))
+        return bg
+
+    def _make_domain_view(self, img: Image.Image, row, domain_choice: int) -> Image.Image:
+        """
+        domain_choice:
+          0 -> full image
+          1 -> cropped bird
+          2 -> background-focused
+        """
+        if domain_choice == 0:
+            return img
+        elif domain_choice == 1:
+            return self._crop_bird(img, row)
+        elif domain_choice == 2:
+            return self._background_focused(img, row)
+        else:
+            raise ValueError(f"Unknown domain_choice {domain_choice}")
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int, int]:
+        """
+        Returns:
+            image_tensor: transformed image
+            label: int class index (0..199)
+            domain_id: 0 (full), 1 (crop), 2 (background)
+        """
+        row = self.df.iloc[idx]
+        label = int(row["class_id"])
+
+        # domain selection
+        if self.which_domain == "A":
+            domain_id = 0
+        elif self.which_domain == "B":
+            domain_id = 1
+        elif self.which_domain == "C":
+            domain_id = 2
+        elif self.which_domain == "all":
+            domain_id = random.choice([0, 1, 2])
+        else:
+            raise ValueError(f"Unknown which_domain={self.which_domain}")
+
+        # load full image and then create domain-specific view
+        full_img = self._load_full_image(row)
+        pil_img = self._make_domain_view(full_img, row, domain_id)
+
+        img_tensor = self.transform(pil_img)
+        return img_tensor, label, domain_id
