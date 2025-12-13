@@ -28,7 +28,7 @@ parser.add_argument('--id', default='')
 parser.add_argument('--seed', default=0)
 parser.add_argument('--gpuid', default=0, type=int)
 parser.add_argument('--num_class', default=2, type=int)#Modified
-parser.add_argument('--data_path', default='./cifar-10-batches-py', type=str, help='path to dataset')
+parser.add_argument('--data_path', default='./cifar-10-batches-py', type=str, help='path to dataset')#cifar-10n python path
 parser.add_argument('--dataset', default='cifar10', type=str)
 parser.add_argument('--pretrained_path', type=str, default=None)
 args = parser.parse_args()

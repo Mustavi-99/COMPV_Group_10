@@ -4,7 +4,7 @@ import sys
 
 # Configuration (Same as your training script)
 DATASET = 'cifar10'
-ROOT_DIR = './cifar-10-batches-py'
+ROOT_DIR = ''#cifar-10n python directory
 NOISE_RATIO = 0.1   # Change this to check different noise levels
 NOISE_MODE = 'sym'
 BATCH_SIZE = 64
