@@ -1,6 +1,6 @@
 # Investigating the Impact of Distributionally Robust Optimization on Learning with Noisy Labels
 
-**COMP-5422-FA - Comp Vision & Image Analysis Course Project** 
+**COMP-5422-FA - Comp Vision & Image Analysis Course Project- Group 10** 
 
 This repository contains PyTorch implementations for two distinct machine learning research tracks:
 1. **Distributionally Robust Optimization (DRO):** Handling spurious correlations and group shifts, specifically tested on the Waterbirds dataset.
